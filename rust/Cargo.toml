@@ -1,0 +1,13 @@
+[package]
+name = "rust-esp32-std-hello"
+version = "0.1.0"
+authors = ["ivmarkov"]
+edition = "2018"
+
+[dependencies]
+esp-idf-sys = { git = "https://github.com/ivmarkov/esp-idf-sys.git" }
+led-strip = { path = "/home/syn/projects/esp32-apa106-rs" }
+# wasm3 = "0.1.3"
+
+[lib]
+crate-type = ["staticlib"]
