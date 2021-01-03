@@ -151,22 +151,16 @@ pub extern "C" fn entry(_: *mut c_void) {
         buf.reserve(len.saturating_sub(buf.capacity()));
         println!("reserved up to {}", len);
         socket.read_exact(&mut buf[..len]).unwrap();
-        println!("read data");
+        println!("read data: {:?}", &buf[..len]);
         match buf[0] {
             0 => {
                 if EXECUTING.load(Ordering::SeqCst) {
                     continue;
                 }
-                let data = String::from_utf8_lossy(&buf[1..len]);
-                let data: Result<Vec<u8>, _> =
-                    data.trim().split(',').map(|item| item.parse()).collect();
-                if let Ok(data) = data {
-                    if data.len() == 3 {
-                        println!("writing {:?} to i2c...", data);
-                        update_strip(Update::Unbuffered(0, 75, data.try_into().unwrap()));
-                        println!("done\n");
-                    }
-                }
+                let data = &buf[1..len];
+                println!("writing {:?} to i2c...", data);
+                update_strip(Update::Unbuffered(0, 75, data.try_into().unwrap()));
+                println!("done\n");
             }
             1 => {
                 EXECUTING.store(false, Ordering::SeqCst);
