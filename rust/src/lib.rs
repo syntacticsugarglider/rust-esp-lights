@@ -1,7 +1,7 @@
 mod wifi;
 
 use esp_idf_sys::{
-    c_types::c_void, esp, esp_err_t, gpio_num_t_GPIO_NUM_21, gpio_num_t_GPIO_NUM_22,
+    c_types::c_void, esp, esp_err_t, ets_delay_us, gpio_num_t_GPIO_NUM_21, gpio_num_t_GPIO_NUM_22,
     i2c_cmd_link_create, i2c_cmd_link_delete, i2c_config_t, i2c_config_t__bindgen_ty_1,
     i2c_config_t__bindgen_ty_1__bindgen_ty_1, i2c_driver_install, i2c_master_cmd_begin,
     i2c_master_start, i2c_master_stop, i2c_master_write_byte, i2c_mode_t_I2C_MODE_MASTER,
@@ -15,13 +15,45 @@ use std::{
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
-fn update_strip(data: [u8; 3]) {
+#[repr(C)]
+union OutputData {
+    unbuffered: (u8, u8, [u8; 3]),
+    buffered: (u8, u8, u32),
+}
+
+#[repr(C)]
+struct Output {
+    buffered: bool,
+    data: OutputData,
+}
+
+#[derive(Debug)]
+enum Update<'a> {
+    Buffered(u8, u8, &'a [[u8; 3]]),
+    Unbuffered(u8, u8, [u8; 3]),
+}
+
+fn update_strip(data: Update<'_>) {
     unsafe {
         let cmd = i2c_cmd_link_create();
         esp!(i2c_master_start(cmd)).unwrap();
-        esp!(i2c_master_write_byte(cmd, 0, true)).unwrap();
-        for byte in &data {
-            esp!(i2c_master_write_byte(cmd, *byte, true)).unwrap();
+        match data {
+            Update::Unbuffered(start, finish, color) => {
+                esp!(i2c_master_write_byte(cmd, 0, true)).unwrap();
+                esp!(i2c_master_write_byte(cmd, start, true)).unwrap();
+                esp!(i2c_master_write_byte(cmd, finish, true)).unwrap();
+                for byte in &color {
+                    esp!(i2c_master_write_byte(cmd, *byte, true)).unwrap();
+                }
+            }
+            Update::Buffered(start, finish, buffer) => {
+                esp!(i2c_master_write_byte(cmd, 0, true)).unwrap();
+                esp!(i2c_master_write_byte(cmd, 75 + start, true)).unwrap();
+                esp!(i2c_master_write_byte(cmd, finish, true)).unwrap();
+                for byte in buffer.iter().flatten() {
+                    esp!(i2c_master_write_byte(cmd, *byte, true)).unwrap();
+                }
+            }
         }
         esp!(i2c_master_stop(cmd)).unwrap();
         esp!(i2c_master_cmd_begin(I2C_NUM_1 as i32, cmd, 10000)).unwrap();
@@ -60,11 +92,27 @@ impl WasmStorage {
             .invoke_export_with_stack("entry", &[], &mut wasmi::NopExternals, &mut self.stack)
             .expect("failed to execute entry")
         {
-            let color: [u8; 3] = data.to_le_bytes()[..3].try_into().unwrap();
-            update_strip(color);
-            unsafe {
-                vTaskDelay(10);
-            }
+            let mut output = [0u8; std::mem::size_of::<Output>()];
+            let mem = self.module.export_by_name("memory").unwrap();
+            let mem = mem.as_memory().unwrap();
+            mem.get_into(data as u32, &mut output).unwrap();
+            let output: Output = unsafe { std::mem::transmute(output) };
+            let mut buf = [0u8; 75 * 3];
+            update_strip(if output.buffered {
+                let (start, end, pointer) = unsafe { output.data.buffered };
+                let target = &mut buf[..(end - start + 1) as usize * 3];
+                mem.get_into(pointer, target).unwrap();
+                Update::Buffered(start, end, unsafe {
+                    std::slice::from_raw_parts_mut(
+                        target.as_mut_ptr() as *mut _,
+                        (end - start + 1) as usize,
+                    )
+                })
+            } else {
+                let (start, end, color) = unsafe { output.data.unbuffered };
+                Update::Unbuffered(start, end, color)
+            });
+            unsafe { ets_delay_us(10_000) }
         }
     }
 }
@@ -73,7 +121,6 @@ pub extern "C" fn wasm_exec(_: *mut c_void) {
     let mut storage = unsafe { Box::from_raw(STORAGE.load(Ordering::SeqCst)) };
     while EXECUTING.load(Ordering::SeqCst) {
         storage.exec();
-        unsafe { vTaskDelay(1) }
     }
     drop(storage);
     unsafe { vTaskDelete(std::ptr::null_mut()) };
@@ -89,12 +136,12 @@ pub extern "C" fn entry(_: *mut c_void) {
         sda_io_num: gpio_num_t_GPIO_NUM_21,
         scl_io_num: gpio_num_t_GPIO_NUM_22,
         __bindgen_anon_1: i2c_config_t__bindgen_ty_1 {
-            master: i2c_config_t__bindgen_ty_1__bindgen_ty_1 { clk_speed: 100_000 },
+            master: i2c_config_t__bindgen_ty_1__bindgen_ty_1 { clk_speed: 400_000 },
         },
     };
     esp!(unsafe { i2c_param_config(I2C_NUM_1 as i32, &config) }).unwrap();
     esp!(unsafe { i2c_driver_install(I2C_NUM_1 as i32, config.mode, 0, 0, 0,) }).unwrap();
-    let mut socket = TcpStream::connect(("192.168.4.217", 5000)).unwrap();
+    let mut socket = TcpStream::connect(("192.168.4.250", 5000)).unwrap();
     println!("connected");
     let mut buf = vec![0u8; 1024];
     let mut len = [0u8; 4];
@@ -116,7 +163,7 @@ pub extern "C" fn entry(_: *mut c_void) {
                 if let Ok(data) = data {
                     if data.len() == 3 {
                         println!("writing {:?} to i2c...", data);
-                        update_strip(data.as_slice().try_into().unwrap());
+                        update_strip(Update::Unbuffered(0, 75, data.try_into().unwrap()));
                         println!("done\n");
                     }
                 }
