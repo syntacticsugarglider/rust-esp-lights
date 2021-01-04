@@ -1,19 +1,18 @@
 use std::ffi::CString;
 
 use esp_idf_sys::{
-    c_types, eNotifyAction_eIncrement, esp, esp_err_t, esp_event_base_t,
-    esp_event_handler_register, esp_event_loop_create_default, esp_event_send_internal,
-    esp_interface_t_ESP_IF_WIFI_STA, esp_netif_create_default_wifi_sta, esp_netif_init, esp_nofail,
-    esp_wifi_connect, esp_wifi_init, esp_wifi_set_config, esp_wifi_set_mode, esp_wifi_start,
-    g_wifi_default_wpa_crypto_funcs, g_wifi_osi_funcs, ip_event_got_ip_t,
-    ip_event_t_IP_EVENT_STA_GOT_IP, nvs_flash_erase, nvs_flash_init, ulTaskNotifyTake,
-    vTaskNotifyGiveFromISR, wifi_auth_mode_t_WIFI_AUTH_OPEN, wifi_config_t,
+    c_types, esp, esp_err_t, esp_event_base_t, esp_event_handler_register,
+    esp_event_loop_create_default, esp_event_send_internal, esp_interface_t_ESP_IF_WIFI_STA,
+    esp_netif_create_default_wifi_sta, esp_netif_init, esp_nofail, esp_wifi_connect, esp_wifi_init,
+    esp_wifi_set_config, esp_wifi_set_mode, esp_wifi_start, g_wifi_default_wpa_crypto_funcs,
+    g_wifi_osi_funcs, ip_event_got_ip_t, ip_event_t_IP_EVENT_STA_GOT_IP, nvs_flash_erase,
+    nvs_flash_init, wifi_auth_mode_t_WIFI_AUTH_OPEN, wifi_config_t,
     wifi_event_t_WIFI_EVENT_STA_DISCONNECTED, wifi_event_t_WIFI_EVENT_STA_START,
     wifi_init_config_t, wifi_mode_t_WIFI_MODE_STA, wifi_pmf_config_t,
     wifi_scan_method_t_WIFI_FAST_SCAN, wifi_scan_threshold_t,
     wifi_sort_method_t_WIFI_CONNECT_AP_BY_SIGNAL, wifi_sta_config_t, xTaskGetCurrentTaskHandle,
-    xTaskNotify, Error, ESP_ERR_NVS_NEW_VERSION_FOUND, ESP_ERR_NVS_NO_FREE_PAGES, ESP_EVENT_ANY_ID,
-    IP_EVENT, WIFI_EVENT,
+    Error, ESP_ERR_NVS_NEW_VERSION_FOUND, ESP_ERR_NVS_NO_FREE_PAGES, ESP_EVENT_ANY_ID, IP_EVENT,
+    WIFI_EVENT,
 };
 
 pub fn connect<T: AsRef<str>, U: AsRef<str>>(ssid: T, pass: U) -> Result<(), Error> {
