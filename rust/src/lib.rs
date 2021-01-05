@@ -107,7 +107,7 @@ pub extern "C" fn entry(_: *mut c_void) {
                     xTaskCreatePinnedToCore(
                         Some(wasm_exec),
                         string.as_ptr(),
-                        4096,
+                        9216,
                         std::ptr::null_mut(),
                         0,
                         std::ptr::null_mut(),

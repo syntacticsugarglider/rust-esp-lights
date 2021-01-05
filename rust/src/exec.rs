@@ -85,7 +85,7 @@ impl WasmExec {
     pub fn new(module: &[u8]) -> Self {
         unsafe {
             let environment = m3_NewEnvironment();
-            let runtime = m3_NewRuntime(environment, 2048, std::ptr::null_mut());
+            let runtime = m3_NewRuntime(environment, 8192, std::ptr::null_mut());
             if runtime.is_null() {
                 panic!("constructing runtime failed");
             }
