@@ -26,7 +26,12 @@ pub unsafe fn update_strip(data: Update<'_>) {
         }
         Update::Buffered(start, finish, buffer) => {
             esp!(i2c_master_write_byte(cmd, 0, true)).unwrap();
-            esp!(i2c_master_write_byte(cmd, 75 + start, true)).unwrap();
+            esp!(i2c_master_write_byte(
+                cmd,
+                crate::LED_COUNT as u8 + start,
+                true
+            ))
+            .unwrap();
             esp!(i2c_master_write_byte(cmd, finish, true)).unwrap();
             for byte in buffer.iter().flatten() {
                 esp!(i2c_master_write_byte(cmd, *byte, true)).unwrap();
@@ -129,7 +134,7 @@ impl WasmExec {
         let ret = *((*self.runtime).stack as *const u32);
         let mem = m3_GetMemory(self.runtime, std::ptr::null_mut(), 0);
         let output = *(mem.add(ret as usize) as *const Output);
-        let mut buf = [[0u8; 3]; 75];
+        let mut buf = [[0u8; 3]; crate::LED_COUNT];
         update_strip(if output.buffered {
             let (start, end, pointer) = output.data.buffered;
             let target = &mut buf[..(end - start + 1) as usize];

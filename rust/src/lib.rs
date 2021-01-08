@@ -17,6 +17,8 @@ use std::{
 mod exec;
 use exec::{update_strip, Update, WasmExec};
 
+const LED_COUNT: usize = 75;
+
 #[no_mangle]
 pub extern "C" fn main() {
     let string = CString::new("entry").unwrap();
@@ -103,7 +105,13 @@ pub extern "C" fn entry(_: *mut c_void) {
                 }
                 let data = &buf[1..len];
                 println!("writing {:?} to i2c...", data);
-                unsafe { update_strip(Update::Unbuffered(0, 75, data.try_into().unwrap())) };
+                unsafe {
+                    update_strip(Update::Unbuffered(
+                        0,
+                        (crate::LED_COUNT - 1) as u8,
+                        data.try_into().unwrap(),
+                    ))
+                };
                 println!("done\n");
             }
             1 => {
