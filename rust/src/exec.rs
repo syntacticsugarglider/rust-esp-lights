@@ -145,9 +145,9 @@ impl WasmExec {
     }
 
     pub unsafe fn write(&mut self, data: &[u8]) {
-        let buf: [i8; std::mem::size_of::<u32>()] =
-            std::mem::transmute((data.len() as u32).to_le_bytes());
-        ckm3(m3_CallWithArgs(self.handle_input, 1, &buf.as_ptr()));
+        let len = CString::new(format!("{}", data.len())).unwrap();
+        let argv = [len.as_c_str().as_ptr(), std::ptr::null()];
+        ckm3(m3_CallWithArgs(self.handle_input, 1, argv.as_ptr()));
         let ret = *((*self.runtime).stack as *const u32);
         if ret == 0 {
             println!("program rejected input");
