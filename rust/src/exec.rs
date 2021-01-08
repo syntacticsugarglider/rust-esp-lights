@@ -1,13 +1,15 @@
 use esp_idf_sys::{
     esp, esp_err_t, i2c_cmd_link_create, i2c_cmd_link_delete, i2c_master_cmd_begin,
-    i2c_master_start, i2c_master_stop, i2c_master_write_byte, Error, I2C_NUM_1,
+    i2c_master_start, i2c_master_stop, i2c_master_write_byte, uxTaskGetStackHighWaterMark, Error,
+    I2C_NUM_1,
 };
 use std::ffi::{CStr, CString};
 use std::fmt::Debug;
 
 use wasm3_sys::{
-    m3_Call, m3_FindFunction, m3_FreeEnvironment, m3_FreeRuntime, m3_GetMemory, m3_LoadModule,
-    m3_NewEnvironment, m3_NewRuntime, m3_ParseModule, IM3Environment, IM3Function, IM3Runtime,
+    m3_Call, m3_CallWithArgs, m3_FindFunction, m3_FreeEnvironment, m3_FreeRuntime, m3_GetMemory,
+    m3_LoadModule, m3_NewEnvironment, m3_NewRuntime, m3_ParseModule, IM3Environment, IM3Function,
+    IM3Runtime,
 };
 
 pub unsafe fn update_strip(data: Update<'_>) {
@@ -39,7 +41,8 @@ pub unsafe fn update_strip(data: Update<'_>) {
 pub struct WasmExec {
     environment: IM3Environment,
     runtime: IM3Runtime,
-    method: IM3Function,
+    entry: IM3Function,
+    handle_input: IM3Function,
 }
 
 #[track_caller]
@@ -82,34 +85,47 @@ pub enum Update<'a> {
 }
 
 impl WasmExec {
-    pub fn new(module: &[u8]) -> Self {
-        unsafe {
-            let environment = m3_NewEnvironment();
-            let runtime = m3_NewRuntime(environment, 8192, std::ptr::null_mut());
-            if runtime.is_null() {
-                panic!("constructing runtime failed");
-            }
-            let mut m3_module = std::ptr::null_mut();
-            ckm3(m3_ParseModule(
-                environment,
-                &mut m3_module,
-                module.as_ptr(),
-                module.len() as u32,
-            ));
-            ckm3(m3_LoadModule(runtime, m3_module));
-            let mut m3_method = std::ptr::null_mut();
-            let name = CString::new("entry").unwrap();
-            ckm3(m3_FindFunction(&mut m3_method, runtime, name.as_ptr()));
-            WasmExec {
-                environment,
-                runtime,
-                method: m3_method,
-            }
+    pub fn new() -> Self {
+        WasmExec {
+            environment: std::ptr::null_mut(),
+            runtime: std::ptr::null_mut(),
+            entry: std::ptr::null_mut(),
+            handle_input: std::ptr::null_mut(),
         }
     }
 
+    pub unsafe fn init(&mut self, module: &[u8]) {
+        let environment = m3_NewEnvironment();
+        let runtime = m3_NewRuntime(environment, 8192, std::ptr::null_mut());
+        if runtime.is_null() {
+            panic!("constructing runtime failed");
+        }
+        let mut m3_module = std::ptr::null_mut();
+        ckm3(m3_ParseModule(
+            environment,
+            &mut m3_module,
+            module.as_ptr(),
+            module.len() as u32,
+        ));
+        ckm3(m3_LoadModule(runtime, m3_module));
+        let mut entry = std::ptr::null_mut();
+        let name = CString::new("entry").unwrap();
+        ckm3(m3_FindFunction(&mut entry, runtime, name.as_ptr()));
+        let mut handle_input = std::ptr::null_mut();
+        let name = CString::new("handle_input").unwrap();
+        ckm3(m3_FindFunction(&mut handle_input, runtime, name.as_ptr()));
+        self.environment = environment;
+        self.entry = entry;
+        self.runtime = runtime;
+        self.handle_input = handle_input;
+        println!(
+            "wasm3 initialized, {} words left in stack at high water",
+            uxTaskGetStackHighWaterMark(std::ptr::null_mut())
+        );
+    }
+
     pub unsafe fn exec(&mut self) {
-        ckm3(m3_Call(self.method));
+        ckm3(m3_Call(self.entry));
         let ret = *((*self.runtime).stack as *const u32);
         let mem = m3_GetMemory(self.runtime, std::ptr::null_mut(), 0);
         let output = *(mem.add(ret as usize) as *const Output);
@@ -126,6 +142,21 @@ impl WasmExec {
             let (start, end, color) = output.data.unbuffered;
             Update::Unbuffered(start, end, color)
         });
+    }
+
+    pub unsafe fn write(&mut self, data: &[u8]) {
+        let buf: [i8; std::mem::size_of::<u32>()] =
+            std::mem::transmute((data.len() as u32).to_le_bytes());
+        ckm3(m3_CallWithArgs(self.handle_input, 1, &buf.as_ptr()));
+        let ret = *((*self.runtime).stack as *const u32);
+        if ret == 0 {
+            println!("program rejected input");
+            return;
+        }
+        let mem = m3_GetMemory(self.runtime, std::ptr::null_mut(), 0);
+        let output = std::slice::from_raw_parts_mut(mem.add(ret as usize), data.len());
+        output.copy_from_slice(data);
+        println!("wrote {} bytes to program memory: {:?}", data.len(), data);
     }
 }
 

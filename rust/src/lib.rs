@@ -24,7 +24,7 @@ pub extern "C" fn main() {
         xTaskCreatePinnedToCore(
             Some(entry),
             string.as_ptr(),
-            102400,
+            10240,
             std::ptr::null_mut(),
             0,
             std::ptr::null_mut(),
@@ -34,7 +34,10 @@ pub extern "C" fn main() {
 }
 
 static EXECUTING: AtomicBool = AtomicBool::new(false);
+static mut BUF: [u8; 10240] = [0u8; 10240];
+static mut LEN: usize = 0;
 static STORAGE: AtomicPtr<WasmStorage> = AtomicPtr::new(std::ptr::null_mut());
+static INPUT_READY: AtomicBool = AtomicBool::new(false);
 
 struct WasmStorage {
     exec: WasmExec,
@@ -50,9 +53,18 @@ impl WasmStorage {
 }
 
 pub extern "C" fn wasm_exec(_: *mut c_void) {
+    EXECUTING.store(true, Ordering::SeqCst);
+    println!("entered execution thread");
     let mut storage = unsafe { Box::from_raw(STORAGE.load(Ordering::SeqCst)) };
+    unsafe {
+        storage.exec.init(&BUF[1..LEN]);
+    }
     while EXECUTING.load(Ordering::SeqCst) {
         storage.exec();
+        if INPUT_READY.load(Ordering::SeqCst) {
+            unsafe { storage.exec.write(&BUF[1..LEN]) };
+            INPUT_READY.store(false, Ordering::SeqCst);
+        }
     }
     drop(storage);
     unsafe { vTaskDelete(std::ptr::null_mut()) };
@@ -75,11 +87,12 @@ pub extern "C" fn entry(_: *mut c_void) {
     esp!(unsafe { i2c_driver_install(I2C_NUM_1 as i32, config.mode, 0, 0, 0,) }).unwrap();
     let mut socket = TcpStream::connect(("192.168.4.250", 5000)).unwrap();
     println!("connected");
-    let mut buf = [0u8; 65536];
+    let buf = unsafe { &mut BUF };
     let mut len = [0u8; 4];
     loop {
         socket.read_exact(&mut len).unwrap();
         let len = u32::from_le_bytes(len) as usize;
+        INPUT_READY.store(false, Ordering::SeqCst);
         socket.read_exact(&mut buf[..len]).unwrap();
         println!("read {}", len);
         match buf[0] {
@@ -96,18 +109,19 @@ pub extern "C" fn entry(_: *mut c_void) {
             1 => {
                 EXECUTING.store(false, Ordering::SeqCst);
                 unsafe { vTaskDelay(100) };
+                unsafe {
+                    LEN = len;
+                }
                 let storage = Box::new(WasmStorage {
-                    exec: WasmExec::new(&buf[1..len]),
+                    exec: WasmExec::new(),
                 });
-                drop(buf);
                 STORAGE.store(Box::into_raw(storage), Ordering::SeqCst);
-                EXECUTING.store(true, Ordering::SeqCst);
                 let string = CString::new("wasm_exec").unwrap();
                 unsafe {
                     xTaskCreatePinnedToCore(
                         Some(wasm_exec),
                         string.as_ptr(),
-                        9216,
+                        65535,
                         std::ptr::null_mut(),
                         0,
                         std::ptr::null_mut(),
@@ -118,6 +132,15 @@ pub extern "C" fn entry(_: *mut c_void) {
             2 => {
                 EXECUTING.store(false, Ordering::SeqCst);
                 unsafe { vTaskDelay(100) }
+            }
+            3 => {
+                if EXECUTING.load(Ordering::SeqCst) {
+                    println!("got {} bytes for program input", len);
+                    unsafe {
+                        LEN = len;
+                    }
+                    INPUT_READY.store(true, Ordering::SeqCst);
+                }
             }
             command => {
                 println!("unknown command {}", command)
