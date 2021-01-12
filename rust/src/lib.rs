@@ -17,7 +17,7 @@ use std::{
 mod exec;
 use exec::{update_strip, Update, WasmExec};
 
-const LED_COUNT: usize = 76;
+const LED_COUNT: usize = 88;
 
 #[no_mangle]
 pub extern "C" fn main() {
