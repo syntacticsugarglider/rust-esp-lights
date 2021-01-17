@@ -6,6 +6,7 @@ use esp_idf_sys::{
     i2c_driver_install, i2c_mode_t_I2C_MODE_MASTER, i2c_param_config, vTaskDelay, vTaskDelete,
     xTaskCreatePinnedToCore, Error, I2C_NUM_1,
 };
+use led_strip::{Apa106, Color, OutputPin, RmtChannel};
 use std::{
     convert::TryInto,
     ffi::CString,
@@ -15,7 +16,7 @@ use std::{
 };
 
 mod exec;
-use exec::{update_strip, Update, WasmExec};
+use exec::WasmExec;
 
 const LED_COUNT: usize = 88;
 
@@ -105,13 +106,16 @@ pub extern "C" fn entry(_: *mut c_void) {
                 }
                 let data = &buf[1..len];
                 println!("writing {:?} to i2c...", data);
-                unsafe {
-                    update_strip(Update::Unbuffered(
-                        0,
-                        (crate::LED_COUNT - 1) as u8,
-                        data.try_into().unwrap(),
-                    ))
-                };
+                let mut leds = Apa106::new(RmtChannel::_6, OutputPin::_4, LED_COUNT).unwrap();
+                let data: [u8; 3] = data.try_into().unwrap();
+                for led in &mut leds {
+                    *led = Color {
+                        red: data[0],
+                        green: data[1],
+                        blue: data[2],
+                    }
+                }
+                leds.flush().unwrap();
                 println!("done\n");
             }
             1 => {

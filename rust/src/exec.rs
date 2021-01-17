@@ -1,8 +1,5 @@
-use esp_idf_sys::{
-    esp, esp_err_t, i2c_cmd_link_create, i2c_cmd_link_delete, i2c_master_cmd_begin,
-    i2c_master_start, i2c_master_stop, i2c_master_write_byte, uxTaskGetStackHighWaterMark, Error,
-    I2C_NUM_1,
-};
+use esp_idf_sys::uxTaskGetStackHighWaterMark;
+use led_strip::{Apa106, Color, OutputPin, RmtChannel};
 use std::ffi::{CStr, CString};
 use std::fmt::Debug;
 
@@ -12,42 +9,12 @@ use wasm3_sys::{
     IM3Runtime,
 };
 
-pub unsafe fn update_strip(data: Update<'_>) {
-    let cmd = i2c_cmd_link_create();
-    esp!(i2c_master_start(cmd)).unwrap();
-    match data {
-        Update::Unbuffered(start, finish, color) => {
-            esp!(i2c_master_write_byte(cmd, 0, true)).unwrap();
-            esp!(i2c_master_write_byte(cmd, start, true)).unwrap();
-            esp!(i2c_master_write_byte(cmd, finish, true)).unwrap();
-            for byte in &color {
-                esp!(i2c_master_write_byte(cmd, *byte, true)).unwrap();
-            }
-        }
-        Update::Buffered(start, finish, buffer) => {
-            esp!(i2c_master_write_byte(cmd, 0, true)).unwrap();
-            esp!(i2c_master_write_byte(
-                cmd,
-                crate::LED_COUNT as u8 + start,
-                true
-            ))
-            .unwrap();
-            esp!(i2c_master_write_byte(cmd, finish, true)).unwrap();
-            for byte in buffer.iter().flatten() {
-                esp!(i2c_master_write_byte(cmd, *byte, true)).unwrap();
-            }
-        }
-    }
-    esp!(i2c_master_stop(cmd)).unwrap();
-    esp!(i2c_master_cmd_begin(I2C_NUM_1 as i32, cmd, 10000)).unwrap();
-    i2c_cmd_link_delete(cmd);
-}
-
 pub struct WasmExec {
     environment: IM3Environment,
     runtime: IM3Runtime,
     entry: IM3Function,
     handle_input: IM3Function,
+    leds: Apa106,
 }
 
 #[track_caller]
@@ -83,18 +50,13 @@ impl Debug for Output {
     }
 }
 
-#[derive(Debug)]
-pub enum Update<'a> {
-    Buffered(u8, u8, &'a [[u8; 3]]),
-    Unbuffered(u8, u8, [u8; 3]),
-}
-
 impl WasmExec {
     pub fn new() -> Self {
         WasmExec {
             environment: std::ptr::null_mut(),
             runtime: std::ptr::null_mut(),
             entry: std::ptr::null_mut(),
+            leds: Apa106::new(RmtChannel::_6, OutputPin::_4, crate::LED_COUNT).unwrap(),
             handle_input: std::ptr::null_mut(),
         }
     }
@@ -135,18 +97,31 @@ impl WasmExec {
         let mem = m3_GetMemory(self.runtime, std::ptr::null_mut(), 0);
         let output = *(mem.add(ret as usize) as *const Output);
         let mut buf = [[0u8; 3]; crate::LED_COUNT];
-        update_strip(if output.buffered {
+        if output.buffered {
             let (start, end, pointer) = output.data.buffered;
             let target = &mut buf[..(end - start + 1) as usize];
             target.copy_from_slice(std::slice::from_raw_parts(
                 mem.add(pointer as usize) as *const _,
                 (end - start + 1) as usize,
             ));
-            Update::Buffered(start, end, &*target)
+            for (led, color) in (&mut self.leds[start as usize..]).into_iter().zip(target) {
+                *led = Color {
+                    red: color[0],
+                    green: color[1],
+                    blue: color[2],
+                }
+            }
         } else {
             let (start, end, color) = output.data.unbuffered;
-            Update::Unbuffered(start, end, color)
-        });
+            for led in &mut self.leds[start as usize..=end as usize] {
+                *led = Color {
+                    red: color[0],
+                    green: color[1],
+                    blue: color[2],
+                }
+            }
+        };
+        self.leds.flush().unwrap();
     }
 
     pub unsafe fn write(&mut self, data: &[u8]) {

@@ -6,8 +6,8 @@ edition = "2018"
 
 [dependencies]
 esp-idf-sys = { git = "https://github.com/ivmarkov/esp-idf-sys.git" }
-wasmi = { version = "0.7.0", default-features = false, features = ["core"] }
 wasm3-sys = { git = "https://github.com/syntacticsugarglider/wasm3-sys", branch = "main" }
+led-strip = { git = "https://github.com/syntacticsugarglider/esp32-apa106-rs", branch = "main" }
 
 [lib]
 crate-type = ["staticlib"]
